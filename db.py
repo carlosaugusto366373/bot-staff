@@ -1,6 +1,10 @@
-﻿import aiosqlite
+import os
+import aiosqlite
 
 DB_PATH = "data/state.db"
+
+# Cria a pasta data se não existir (importante pro Render)
+os.makedirs("data", exist_ok=True)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS processed_orders (
