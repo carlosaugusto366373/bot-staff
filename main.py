@@ -1,8 +1,11 @@
+import os
 import logging
 import time
 import re
+import asyncio
 import discord
 from discord.ext import commands
+from aiohttp import web
 
 import config
 from db import init_db, order_already_processed, mark_order_processed
@@ -37,12 +40,12 @@ async def on_ready():
 async def on_message(message: discord.Message):
     if message.author.id == bot.user.id:
         return
-
     await parser.handle_message(message)
     await recovery.handle_cart_message(message)
     await bot.process_commands(message)
 
 
+# --- COMANDOS ---
 @bot.command(name="carrinho", aliases=["nudge", "lembrar"])
 @commands.has_permissions(manage_guild=True)
 async def registrar_carrinho(ctx, member: discord.Member, total: str, url: str, *, itens: str = "seu pedido"):
@@ -62,11 +65,10 @@ async def reprocessar_logs(ctx, limite: int = 100):
     target = bot.get_channel(config.DELIVERED_CHANNEL_ID)
     
     if not source or not target:
-        await ctx.reply("❌ Canais não encontrados. Confere os IDs no .env.")
+        await ctx.reply("❌ Canais não encontrados. Confere os IDs.")
         return
 
-    msg = await ctx.reply(f"⏳ Lendo as últimas {limite} mensagens de logs...")
-    
+    msg = await ctx.reply(f"⏳ Lendo as últimas {limite} mensagens...")
     count_ok = 0
     count_skip = 0
     count_fail = 0
@@ -75,7 +77,6 @@ async def reprocessar_logs(ctx, limite: int = 100):
         data = parse_payment_message(m.content, m.embeds, m.components)
         if not data:
             continue
-            
         if await order_already_processed(data["order_id"]):
             count_skip += 1
             continue
@@ -87,11 +88,8 @@ async def reprocessar_logs(ctx, limite: int = 100):
                 client_id = int(match_cid.group(1))
             
             user = bot.get_user(client_id) if client_id else None
-            avatar_url = user.display_avatar.url if user else "https://cdn.discordapp.com/embed/avatars/0.png"
-            
-            client_name = data["client"].replace("<@", "").replace(">", "")
-            if user:
-                client_name = user.name
+            avatar_url = user.display_avatar.url if user else None
+            client_name = user.name if user else data["client"].replace("<@", "").replace(">", "")
 
             img_buffer = await generate_receipt_image(
                 client_name=client_name,
@@ -118,5 +116,27 @@ async def status(ctx):
     await ctx.reply("bot ativo.")
 
 
+# --- SERVIDOR WEB FAKE PARA O RENDER ---
+async def handle_ping(request):
+    return web.Response(text="Bot QZZ STAFF Online e rodando!")
+
+async def start_webserver():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    log.info(f"Servidor web escutando na porta {port}")
+
+# --- MAIN ---
+async def main():
+    await start_webserver() # Sobe o servidor web pro Render
+    await bot.start(config.TOKEN) # Sobe o bot
+
 if __name__ == "__main__":
-    bot.run(config.TOKEN)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
